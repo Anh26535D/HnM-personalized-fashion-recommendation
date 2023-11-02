@@ -1,34 +1,39 @@
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 
-class Attention(torch.nn.Module):
+class AdditiveAttention(torch.nn.Module):
+    def __init__(self,
+                 candidate_vector_dim,
+                 query_vector_dim,
+                 ):
+        super(AdditiveAttention, self).__init__()
+        self.linear = nn.Linear(candidate_vector_dim, query_vector_dim)
+        self.attention_query_vector = nn.Parameter(
+            torch.empty(query_vector_dim).uniform_(-0.1, 0.1))
 
-    def __init__(self, encoder_dim: int, decoder_dim: int):
-        super().__init__()
-        self.encoder_dim = encoder_dim
-        self.decoder_dim = decoder_dim
+    def forward(self, candidate_vector: torch.Tensor) -> torch.Tensor:
+        """
 
-    def forward(self, 
-        query: torch.Tensor,  # [decoder_dim]
-        values: torch.Tensor, # [seq_length, encoder_dim]
-        ):
-        weights = self._get_weights(query, values) # [seq_length]
-        weights = torch.nn.functional.softmax(weights, dim=0)
-        return weights @ values  # [encoder_dim]
-    
-class AdditiveAttention(Attention):
+        Arguments
+        ----------
+            candidate_vector: torch.Tensor
+                Tensor with shape of (batch_size, candidate_size, candidate_vector_dim).
 
-    def __init__(self, encoder_dim, decoder_dim):
-        super().__init__(encoder_dim, decoder_dim)
-        self.v = torch.nn.Parameter(
-            torch.FloatTensor(self.decoder_dim).uniform_(-0.1, 0.1))
-        self.W_1 = torch.nn.Linear(self.decoder_dim, self.decoder_dim)
-        self.W_2 = torch.nn.Linear(self.encoder_dim, self.decoder_dim)
+        Returns
+        -------
+            torch.Tensor
+                Tensor with shape (batch_size, candidate_vector_dim).
+        """
+        # temp has shape of [batch_size, candidate_size, query_vector_dim]
+        temp = torch.tanh(self.linear(candidate_vector))
 
-    def _get_weights(self,        
-        query: torch.Tensor,  # [decoder_dim]
-        values: torch.Tensor,  # [seq_length, encoder_dim]
-    ):
-        query = query.repeat(values.size(0), 1)  # [seq_length, decoder_dim]
-        weights = self.W_1(query) + self.W_2(values)  # [seq_length, decoder_dim]
-        return torch.tanh(weights) @ self.v  # [seq_length]
+        # candidate_weights has shape of [batch_size, candidate_size]
+        candidate_weights = torch.matmul(temp, self.attention_query_vector)
+        candidate_weights = F.softmax(candidate_weights, dim=1)
+
+        # target has shape of [batch_size, candidate_vector_dim]
+        target = torch.bmm(candidate_weights.unsqueeze(dim=1),
+                           candidate_vector).squeeze(dim=1)
+        return target
