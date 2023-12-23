@@ -1,6 +1,5 @@
 from typing import List
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -78,8 +77,8 @@ class CategoryEncoder(nn.Module):
         self.embedding = embedding
         self.linear = nn.Linear(linear_input_dim, linear_output_dim)
 
-    def forward(self, element):
-        return F.relu(self.linear(self.embedding(element)))
+    def forward(self, category):
+        return F.relu(self.linear(self.embedding(category)))
 
 
 class ArticleEncoder(nn.Module):
@@ -118,7 +117,7 @@ class ArticleEncoder(nn.Module):
             ) for name in text_cols
         })
 
-        self.element_encoders = nn.ModuleDict({
+        self.category_encoders = nn.ModuleDict({
             name:
             CategoryEncoder(
                 nn.Embedding(num_categories[idx], category_embedding_dim, padding_idx=0), 
@@ -137,12 +136,12 @@ class ArticleEncoder(nn.Module):
             encoder(articles[name])
             for name, encoder in self.text_encoders.items()
         ]
-        element_vectors = [
+        category_vectors = [
             encoder(torch.tensor(articles[name]))
-            for name, encoder in self.element_encoders.items()
+            for name, encoder in self.category_encoders.items()
         ]
 
-        all_vectors = text_vectors + element_vectors
+        all_vectors = text_vectors + category_vectors
         if len(all_vectors) == 1:
             final_news_vector = all_vectors[0]
         else:
