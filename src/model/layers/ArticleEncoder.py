@@ -1,7 +1,12 @@
+from typing import List
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 from src.model.layers.AdditiveAttention import AdditiveAttention
+
 
 class TextEncoder(nn.Module):
     def __init__(
@@ -42,7 +47,7 @@ class TextEncoder(nn.Module):
 
     def forward(self, articles):
         # articles has shape of [num_articles, len(articles.columns)]
-        X = [self.tokenizer(text) for text in articles["detail_desc"]]
+        X = [self.tokenizer(text) for text in articles]
         X = [tokens+[""] * (self.max_words_per_text-len(tokens)) if len(tokens) <
              self.max_words_per_text else tokens[:self.max_words_per_text] for tokens in X]
 
@@ -68,8 +73,79 @@ class TextEncoder(nn.Module):
 
 
 class CategoryEncoder(nn.Module):
-    pass
+    def __init__(self, embedding, linear_input_dim, linear_output_dim):
+        super(CategoryEncoder, self).__init__()
+        self.embedding = embedding
+        self.linear = nn.Linear(linear_input_dim, linear_output_dim)
+
+    def forward(self, element):
+        return F.relu(self.linear(self.embedding(element)))
 
 
 class ArticleEncoder(nn.Module):
-    pass
+    def __init__(
+            self, 
+            text_cols: List, 
+            category_cols: List,
+            # For TextEncoder
+            tokenizer,
+            pretrained_word_embedding,
+            word_embedding_dim,
+            max_words_per_text,
+            query_vector_dim,
+            num_filters,
+            window_size,
+            dropout_proba,
+            is_training,
+            # For CategoryEncoder
+            category_embedding_dim,
+            num_categories, # list of number of categories for each category column 
+        ):
+        super(ArticleEncoder, self).__init__()
+
+        self.text_encoders = nn.ModuleDict({
+            name:
+            TextEncoder(
+                tokenizer,
+                pretrained_word_embedding, 
+                word_embedding_dim,
+                max_words_per_text,
+                num_filters, 
+                window_size,
+                query_vector_dim,
+                dropout_proba,
+                is_training
+            ) for name in text_cols
+        })
+
+        self.element_encoders = nn.ModuleDict({
+            name:
+            CategoryEncoder(
+                nn.Embedding(num_categories[idx], category_embedding_dim, padding_idx=0), 
+                category_embedding_dim,
+                num_filters
+            ) for idx, name in enumerate(category_cols)
+        })
+
+        self.final_attention = AdditiveAttention(
+            candidate_vector_dim=num_filters,
+            query_vector_dim=query_vector_dim, 
+        )
+
+    def forward(self, articles):
+        text_vectors = [
+            encoder(articles[name])
+            for name, encoder in self.text_encoders.items()
+        ]
+        element_vectors = [
+            encoder(torch.tensor(articles[name]))
+            for name, encoder in self.element_encoders.items()
+        ]
+
+        all_vectors = text_vectors + element_vectors
+        if len(all_vectors) == 1:
+            final_news_vector = all_vectors[0]
+        else:
+            final_news_vector = self.final_attention(
+                torch.stack(all_vectors, dim=1))
+        return final_news_vector

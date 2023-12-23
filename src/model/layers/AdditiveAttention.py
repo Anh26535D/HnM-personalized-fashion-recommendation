@@ -14,18 +14,6 @@ class AdditiveAttention(torch.nn.Module):
             torch.empty(query_vector_dim).uniform_(-0.1, 0.1))
 
     def forward(self, candidate_vector: torch.Tensor) -> torch.Tensor:
-        """
-
-        Arguments
-        ----------
-            candidate_vector: torch.Tensor
-                Tensor with shape of (batch_size, candidate_size, candidate_vector_dim).
-
-        Returns
-        -------
-            torch.Tensor
-                Tensor with shape (batch_size, candidate_vector_dim).
-        """
         # temp has shape of [batch_size, candidate_size, query_vector_dim]
         temp = torch.tanh(self.linear(candidate_vector))
 
