@@ -1,8 +1,12 @@
 # dataset folder
 data/
+processed_data/
 
-# GloVe word embeddings
-.vector_cache/
+# Checkpoint folder
+checkpoint/
+
+# Tensorboard files
+runs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
