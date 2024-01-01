@@ -49,8 +49,7 @@ def latest_checkpoint(directory):
     if not os.path.exists(directory):
         return None
     all_checkpoints = {
-        int(x.split('.')[-2].split('-')[-1]): x
-        for x in os.listdir(directory)
+        int(x.split('.')[-2].split('-')[-1]): x for x in os.listdir(directory)
     }
     if not all_checkpoints:
         return None
@@ -187,7 +186,7 @@ def train():
                             'optimizer_state_dict': optimizer.state_dict(),
                             'step': step,
                             'early_stop_value': -recall
-                        }, f"./checkpoint/NAML/ckpt-{step}-better.pth")
+                        }, f"./checkpoint/NAML/ckpt-better-{step}.pth")
                 except OSError as error:
                     print(f"OS error: {error}")
 
