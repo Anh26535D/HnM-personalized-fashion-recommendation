@@ -19,16 +19,13 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 class EarlyStopping:
-    def __init__(self, patience=5):
+    def __init__(self, patience=10):
         self.patience = patience
         self.counter = 0
         self.best_loss = np.Inf
 
     def __call__(self, val_loss):
-        """
-        if you use other metrics where a higher value is better, e.g. accuracy,
-        call this with its corresponding negative value
-        """
+        """A lower value is better, e.g. loss."""
         if val_loss < self.best_loss:
             early_stop = False
             get_better = True
@@ -45,6 +42,13 @@ class EarlyStopping:
         return early_stop, get_better
 
 
+def time_since(since):
+    """Format elapsed time string."""
+    now = time.time()
+    elapsed_time = now - since
+    return time.strftime("%H:%M:%S", time.gmtime(elapsed_time))
+
+
 def latest_checkpoint(directory):
     if not os.path.exists(directory):
         return None
@@ -58,12 +62,14 @@ def latest_checkpoint(directory):
 
 
 def train():
+    # Create saving directory for tensorboard
     timestamp = datetime.datetime.now().replace(microsecond=0).isoformat()
     timestamp_for_path = timestamp.replace(":", "_")
     writer = SummaryWriter(
         log_dir=f"./runs/NAML/{timestamp_for_path}"
     )
 
+    # Create saving directory for checkpoints
     if not os.path.exists('checkpoint'):
         os.makedirs('checkpoint')
 
@@ -138,7 +144,7 @@ def train():
         y_pred = model(candidates, prev_purchased)
 
         y_true = torch.zeros_like(y_pred).double().to(device)
-        y_true[:, -1] = 1 # The last one is the positive sample
+        y_true[:, 0] = 1 # The first one is the positive sample
         
         loss = criterion(y_pred, y_true)
         loss_full.append(loss.item())
@@ -171,7 +177,7 @@ def train():
             writer.add_scalar('Validation/Recall', recall, step)
             writer.add_scalar('Validation/APK@12', val_apk12, step)
             tqdm.write(
-                f"Time {time_since(start_time)}, batches {i}, validation Recall: {recall:.4f}, validation APK@12: {val_apk12:.4f}, "
+                f"Time {time_since(start_time)}, batches {i}, validation Recall: {recall:.4f}, validation APK@12: {val_apk12:.4f}"
             )
 
             early_stop, get_better = early_stopping(-recall)
@@ -191,16 +197,7 @@ def train():
                     print(f"OS error: {error}")
 
 
-def time_since(since):
-    """
-    Format elapsed time string.
-    """
-    now = time.time()
-    elapsed_time = now - since
-    return time.strftime("%H:%M:%S", time.gmtime(elapsed_time))
-
-
 if __name__ == '__main__':
     print('Using device:', device)
-    print(f'Training model NAML')
+    print(f'Training model NAML...')
     train()

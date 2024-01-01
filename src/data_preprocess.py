@@ -9,9 +9,10 @@ import swifter
 from tqdm import tqdm
 from nltk.tokenize import word_tokenize
 
-nltk.download('punkt')
-
 from config import NAMLConfig as config
+
+
+nltk.download('punkt')
 
 
 def parse_customers(source, target, user2int_path):

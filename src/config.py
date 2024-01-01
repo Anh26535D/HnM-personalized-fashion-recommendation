@@ -1,20 +1,18 @@
 class BaseConfig():
-    """
-    General configurations
-    """
+    """General configurations"""
     num_epochs = 1
     num_batches_show_loss = 10  # Number of batchs to show loss
     # Number of batchs to check metrics on validation dataset
     num_batches_validate = 100
     batch_size = 128
-    learning_rate = 0.01
+    learning_rate = 0.001
     num_workers = 0  # Number of workers for data loading, in windows, it should be 0 (bug)
     num_prev_purchased = 30  # Number of sampled purchase history for each user
     num_words_detail_desc = 100  # Number of words in detail description
     word_freq_threshold = 1
-    negative_sampling_ratio = 100  # K
-    num_random_sampled_articles = 1  # Number of random sampled articles for each user
-    dropout_probability = 0.2
+    negative_sampling_ratio = 50  # K
+    num_random_sampled_articles = 50  # Number of random sampled articles for each user
+    dropout_probability = 0.4
     # Modify the following by the output of `src/data_preprocess.py`
     max_history = 30  # Max number of purchase history stored for each user
     processed_data_path = "processed_data/"
@@ -23,7 +21,6 @@ class BaseConfig():
     num_users = 1 + 1371980
     word_embedding_dim = 100
     category_embedding_dim = 100
-
 
 
 class NAMLConfig(BaseConfig):

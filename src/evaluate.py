@@ -23,7 +23,9 @@ class BaseDataset(Dataset):
         self.transactions_parsed = self.transactions_parsed.groupby(['customer_id']).agg(
             article_ids = ('article_id', list),
             prev_purchased = ('prev_purchased', 'first'),
-        ).reset_index().head(10)
+        ).reset_index()
+        self.temp_transactions = self.transactions_parsed['article_ids'].copy()
+        self.transactions_parsed = self.transactions_parsed.head(10)
 
         self.articles_parsed = pd.read_csv(
             articles_path,
@@ -35,7 +37,6 @@ class BaseDataset(Dataset):
             lambda x: [int(i) for i in x.split()[:config.num_words_detail_desc]] if isinstance(x, str) else x
         )
         
-        self.articles_id2int = {x: i for i, x in enumerate(self.articles_parsed.index)}
         self.articles2dict = self.articles_parsed.to_dict('index')
 
         for key1 in self.articles2dict.keys():
@@ -53,6 +54,8 @@ class BaseDataset(Dataset):
             if k in config.dataset_attributes['articles']
         }
         self.artice_ids = self.articles_parsed.index.tolist()
+        self.articles_id2int = {x: i for i, x in enumerate(self.artice_ids)}
+        self.int2articles_id = {i: x for i, x in enumerate(self.artice_ids)}
         self.prepared_candidate = [
             self.articles2dict[x] for x in tqdm(self.artice_ids, desc="Loading candidate articles")
         ]
@@ -78,9 +81,6 @@ class BaseDataset(Dataset):
             item[key] = row[key]
 
         item["candidate_articles"] = self.prepared_candidate
-        item['label'] = [
-            self.artice_ids.index(x) for x in item['article_ids']
-        ]
         return item
 
 def apk_score(pair, k=12):
@@ -142,7 +142,6 @@ def evaluate(model, directory, max_count=sys.maxsize):
                                 drop_last=True,
                                 pin_memory=True))
 
-
     count = 0
     tasks = []
     candidate_articles_g = None
@@ -171,12 +170,14 @@ def evaluate(model, directory, max_count=sys.maxsize):
         # Shape of batch_size * num_candidates
         y_pred = click_probability
         y_pred = F.softmax(y_pred, dim=1)
-        # We just use top 12 articles for calculating metrics
-        y_pred_topk = y_pred.topk(k=12, dim=1).indices
+        # We just use top 1000 articles for calculating recall
+        y_pred_topk = y_pred.topk(k=1000, dim=1).indices
         y_pred_topk = y_pred_topk.tolist()
+        y_pred_topk = [[dataset.int2articles_id[x] for x in sample] for sample in y_pred_topk]
 
-        y_true = minibatch['label'] # batch_size
+        y_true = minibatch['article_ids'] # batch_size
         y_true = [sample.tolist() for sample in y_true]
+        
         tasks.append((y_true, y_pred_topk))
 
     results = list(map(cal_metrics, tasks))

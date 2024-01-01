@@ -1,8 +1,9 @@
-from torch.utils.data import Dataset
-import pandas as pd
+from ast import literal_eval
+
 import torch
 import numpy as np
-from ast import literal_eval
+import pandas as pd
+from torch.utils.data import Dataset
 
 from config import NAMLConfig as config
 
@@ -78,5 +79,5 @@ class BaseDataset(Dataset):
         item["candidate_articles"] = [
             self.articles2dict[x] for x in self.artice_ids[:config.num_random_sampled_articles]
         ]
-        item["candidate_articles"] += item['article_id_parsed']
+        item["candidate_articles"] = item['article_id_parsed'] + item["candidate_articles"] # First item is the target item
         return item
