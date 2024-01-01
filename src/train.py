@@ -106,7 +106,10 @@ def train():
     if checkpoint_path is not None:
         print(f"Load saved parameters in {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path)
-        early_stopping(checkpoint['early_stop_value'])
+        try:
+            early_stopping(checkpoint['early_stop_value'])
+        except:
+            pass
         step = checkpoint['step']
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -132,11 +135,13 @@ def train():
 
         step += 1
         candidates = minibatch["candidate_articles"]
-        actual = minibatch["article_id"]
-        y_pred = model(candidates, actual)
+        prev_purchased = minibatch["prev_purchased_parsed"]
+        y_pred = model(candidates, prev_purchased)
 
-        y = torch.zeros(len(y_pred)).long().to(device)
-        loss = criterion(y_pred, y)
+        y_true = torch.zeros_like(y_pred).double().to(device)
+        y_true[:, -1] = 1 # The last one is the positive sample
+        
+        loss = criterion(y_pred, y_true)
         loss_full.append(loss.item())
         optimizer.zero_grad()
         loss.backward()
@@ -149,23 +154,28 @@ def train():
             tqdm.write(
                 f"Time {time_since(start_time)}, batches {i}, current loss {loss.item():.4f}, average loss: {np.mean(loss_full):.4f}, latest average loss: {np.mean(loss_full[-256:]):.4f}"
             )
+            try:
+                torch.save(
+                    {
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'step': step,
+                    }, f"./checkpoint/NAML/ckpt-{step}.pth")
+            except OSError as error:
+                print(f"OS error: {error}")
 
         if i % config.num_batches_validate == 0:
             model.eval()
-            val_auc, val_mrr, val_ndcg5, val_ndcg10 = evaluate(
-                model, './processed_data',
-                config.num_workers, 200000)
+            recall, val_apk12 = evaluate(model, './processed_data', 200000)
             
             model.train()
-            writer.add_scalar('Validation/AUC', val_auc, step)
-            writer.add_scalar('Validation/MRR', val_mrr, step)
-            writer.add_scalar('Validation/nDCG@5', val_ndcg5, step)
-            writer.add_scalar('Validation/nDCG@10', val_ndcg10, step)
+            writer.add_scalar('Validation/Recall', recall, step)
+            writer.add_scalar('Validation/APK@12', val_apk12, step)
             tqdm.write(
-                f"Time {time_since(start_time)}, batches {i}, validation AUC: {val_auc:.4f}, validation MRR: {val_mrr:.4f}, validation nDCG@5: {val_ndcg5:.4f}, validation nDCG@10: {val_ndcg10:.4f}, "
+                f"Time {time_since(start_time)}, batches {i}, validation Recall: {recall:.4f}, validation APK@12: {val_apk12:.4f}, "
             )
 
-            early_stop, get_better = early_stopping(-val_auc)
+            early_stop, get_better = early_stopping(-recall)
             if early_stop:
                 tqdm.write('Early stop.')
                 break
@@ -176,8 +186,8 @@ def train():
                             'model_state_dict': model.state_dict(),
                             'optimizer_state_dict': optimizer.state_dict(),
                             'step': step,
-                            'early_stop_value': -val_auc
-                        }, f"./checkpoint/NAML/ckpt-{step}.pth")
+                            'early_stop_value': -recall
+                        }, f"./checkpoint/NAML/ckpt-{step}-better.pth")
                 except OSError as error:
                     print(f"OS error: {error}")
 

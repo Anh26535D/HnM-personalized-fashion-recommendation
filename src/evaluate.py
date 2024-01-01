@@ -1,13 +1,13 @@
 import sys
 from os import path
-from multiprocessing import Pool
+from ast import literal_eval
 
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
-from sklearn.metrics import roc_auc_score
 import torch
 from torch.utils.data import Dataset, DataLoader
+from torch.nn import functional as F
 
 from config import NAMLConfig as config
 from model.naml import NAML as Model
@@ -15,239 +15,173 @@ from model.naml import NAML as Model
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def dcg_score(y_true, y_score, k=10):
-    order = np.argsort(y_score)[::-1]
-    y_true = np.take(y_true, order[:k])
-    gains = 2**y_true - 1
-    discounts = np.log2(np.arange(len(y_true)) + 2)
-    return np.sum(gains / discounts)
+class BaseDataset(Dataset):
+    def __init__(self, transactions_path, articles_path):
+        super(BaseDataset, self).__init__()
 
+        self.transactions_parsed = pd.read_csv(transactions_path)
+        self.transactions_parsed = self.transactions_parsed.groupby(['customer_id']).agg(
+            article_ids = ('article_id', list),
+            prev_purchased = ('prev_purchased', 'first'),
+        ).reset_index().head(10)
 
-def ndcg_score(y_true, y_score, k=10):
-    best = dcg_score(y_true, y_true, k)
-    actual = dcg_score(y_true, y_score, k)
-    return actual / best
-
-
-def mrr_score(y_true, y_score):
-    order = np.argsort(y_score)[::-1]
-    y_true = np.take(y_true, order)
-    rr_score = y_true / (np.arange(len(y_true)) + 1)
-    return np.sum(rr_score) / np.sum(y_true)
-
-
-def value2rank(d):
-    values = list(d.values())
-    ranks = [sorted(values, reverse=True).index(x) for x in values]
-    return {k: ranks[i] + 1 for i, k in enumerate(d.keys())}
-
-
-class ArticleDataset(Dataset):
-    """Load articles for evaluation."""
-    def __init__(self, articles_path):
-        super(ArticleDataset, self).__init__()
         self.articles_parsed = pd.read_csv(
             articles_path,
             index_col='article_id',
             usecols=['article_id'] + config.dataset_attributes['articles'],
         )
+
         self.articles_parsed['detail_desc'] = self.articles_parsed['detail_desc'].apply(
             lambda x: [int(i) for i in x.split()[:config.num_words_detail_desc]] if isinstance(x, str) else x
         )
+        
+        self.articles_id2int = {x: i for i, x in enumerate(self.articles_parsed.index)}
         self.articles2dict = self.articles_parsed.to_dict('index')
+
         for key1 in self.articles2dict.keys():
             for key2 in self.articles2dict[key1].keys():
                 self.articles2dict[key1][key2] = torch.tensor(self.articles2dict[key1][key2])
+                
+        padding_all = {k: 0 for k in config.dataset_attributes['articles']}
+        padding_all['detail_desc'] = [0] * config.num_words_detail_desc
 
-    def __len__(self):
-        return len(self.articles_parsed)
+        for key in padding_all.keys():
+            padding_all[key] = torch.tensor(padding_all[key])
 
-    def __getitem__(self, idx):
-        item = self.articles2dict[idx]
-        return item
-
-
-class CustomerDataset(Dataset):
-    """
-    Load users for evaluation, duplicated rows will be dropped
-    """
-    def __init__(self, customers_path, transactions_path, user2int_path):
-        super(CustomerDataset, self).__init__()
-        self.transactions_df = pd.read_csv(transactions_path)
-
-        self.behaviors.clicked_news.fillna(' ', inplace=True)
-        self.behaviors.drop_duplicates(inplace=True)
-        user2int = dict(pd.read_table(user2int_path).values.tolist())
-        user_total = 0
-        user_missed = 0
-        for row in self.behaviors.itertuples():
-            user_total += 1
-            if row.user in user2int:
-                self.behaviors.at[row.Index, 'user'] = user2int[row.user]
-            else:
-                user_missed += 1
-                self.behaviors.at[row.Index, 'user'] = 0
-
-    def __len__(self):
-        return len(self.behaviors)
-
-    def __getitem__(self, idx):
-        row = self.behaviors.iloc[idx]
-        item = {
-            "user":
-            row.user,
-            "clicked_news_string":
-            row.clicked_news,
-            "clicked_news":
-            row.clicked_news.split()[:config.num_clicked_news_a_user]
+        self.padding = {
+            k: v for k, v in padding_all.items()
+            if k in config.dataset_attributes['articles']
         }
-        item['clicked_news_length'] = len(item["clicked_news"])
-        repeated_times = config.num_clicked_news_a_user - len(
-            item["clicked_news"])
+        self.artice_ids = self.articles_parsed.index.tolist()
+        self.prepared_candidate = [
+            self.articles2dict[x] for x in tqdm(self.artice_ids, desc="Loading candidate articles")
+        ]
+
+    def __len__(self):
+        return len(self.transactions_parsed)
+
+    def __getitem__(self, idx):
+        row = self.transactions_parsed.iloc[idx]
+        item = {}
+        item["article_ids"] = literal_eval(row['article_ids']) if isinstance(row['article_ids'], str) else row['article_ids']
+
+        prev_purchased = literal_eval(row['prev_purchased'])
+        if len(prev_purchased) > config.num_prev_purchased:
+            prev_purchased = prev_purchased[-config.num_prev_purchased:]
+
+        item["prev_purchased_parsed"] = [self.articles2dict[x] for x in prev_purchased]
+        repeated_times = config.num_prev_purchased - len(item["prev_purchased_parsed"])
         assert repeated_times >= 0
-        item["clicked_news"] = ['PADDED_ARTICLE'] * repeated_times + item["clicked_news"]
+        item["prev_purchased_parsed"] = [self.padding] * repeated_times + item["prev_purchased_parsed"]
+
+        for key in config.dataset_attributes['record']:
+            item[key] = row[key]
+
+        item["candidate_articles"] = self.prepared_candidate
+        item['label'] = [
+            self.artice_ids.index(x) for x in item['article_ids']
+        ]
         return item
 
+def apk_score(pair, k=12):
+    """Calculate Average Precision at K (AP@K)"""
+    actual, predicted = pair
+    if len(predicted) > k:
+        predicted = predicted[:k]
 
-class BehaviorsDataset(Dataset):
-    """
-    Load behaviors for evaluation, (user, time) pair as session
-    """
-    def __init__(self, transactions_path):
-        super(BehaviorsDataset, self).__init__()
-        self.behaviors = pd.read_table(transactions_path,
-                                       header=None,
-                                       usecols=range(5),
-                                       names=[
-                                           'impression_id', 'user', 'time',
-                                           'clicked_news', 'impressions'
-                                       ])
-        self.behaviors.clicked_news.fillna(' ', inplace=True)
-        self.behaviors.impressions = self.behaviors.impressions.str.split()
+    score = 0.0
+    num_hits = 0.0
 
-    def __len__(self):
-        return len(self.behaviors)
+    for i, p in enumerate(predicted):
+        if p in actual and p not in predicted[:i]:
+            num_hits += 1.0
+            score += num_hits / (i + 1.0)
 
-    def __getitem__(self, idx):
-        row = self.behaviors.iloc[idx]
-        item = {
-            "impression_id": row.impression_id,
-            "user": row.user,
-            "time": row.time,
-            "clicked_news_string": row.clicked_news,
-            "impressions": row.impressions
-        }
-        return item
+    if not actual:
+        return 0.0
+
+    return score / min(len(actual), k)
 
 
-def calculate_single_user_metric(pair):
-    try:
-        auc = roc_auc_score(*pair)
-        mrr = mrr_score(*pair)
-        ndcg5 = ndcg_score(*pair, 5)
-        ndcg10 = ndcg_score(*pair, 10)
-        return [auc, mrr, ndcg5, ndcg10]
-    except ValueError:
-        return [np.nan] * 4
+def cal_metrics(pair):
+    actuals, predicteds = pair
+    recalls = []
+    apks = []
+    for actual, predicted in zip(actuals, predicteds):
+        if len(actual) == 0:
+            continue
+        TP = len(set(actual) & set(predicted))
+        FN = len(set(actual) - set(predicted))
+        if TP + FN == 0:
+            return [np.nan, np.nan]
+        recall = TP / (TP + FN)
+        apk = apk_score((actual, predicted))
+        recalls.append(recall)
+        apks.append(apk)
+
+    return [np.mean(recall), np.mean(apks)]
 
 
 @torch.no_grad()
-def evaluate(model, directory, num_workers, max_count=sys.maxsize):
+def evaluate(model, directory, max_count=sys.maxsize):
     """
     Evaluate model on target directory.
     Args:
         model: model to be evaluated
-        directory: the directory that contains two files (val/transactions_parsed.csv, articles_parsed.csv)
-        num_workers: processes number for calculating metrics
+        directory: the val directory
     Returns:
-        AUC
-        MRR
-        nDCG@5
-        nDCG@10
+        Recall
+        APK@12
     """
-    articles_path = path.join(directory, 'articles_parsed.csv')
-    transactions_path = path.join(directory, 'val', 'transactions_parsed.csv')
-    user2int_path = path.join(directory, 'user2int.tsv')
+    dataset = BaseDataset(path.join(directory, 'val', 'transactions_parsed.csv'),
+                          path.join(directory, 'articles_parsed.csv'))
+    print(f"Load valid dataset with size {len(dataset)}.")
+    dataloader = iter(DataLoader(dataset,
+                                batch_size=1,
+                                num_workers=config.num_workers,
+                                drop_last=True,
+                                pin_memory=True))
 
-    article_ds = ArticleDataset(articles_path)
-    articles_dataloader = DataLoader(article_ds,
-                                 batch_size=config.batch_size * 16,
-                                 shuffle=False,
-                                 num_workers=config.num_workers,
-                                 drop_last=False,
-                                 pin_memory=True)
-
-    article2vect = {}
-    for minibatch in tqdm(articles_dataloader, desc="Calculating vectors for article"):
-        articles_ids = minibatch["id"]
-        if any(id not in article2vect for id in articles_ids):
-            article_vectors = model.get_article_vector(minibatch)
-            for id, vector in zip(articles_ids, article_vectors):
-                if id not in article2vect:
-                    article2vect[id] = vector
-
-    article2vect['PADDED_ARTICLE'] = torch.zeros(list(article2vect.values())[0].size())
-
-    user_dataset = CustomerDataset(transactions_path, user2int_path)
-    user_dataloader = DataLoader(user_dataset,
-                                 batch_size=config.batch_size * 16,
-                                 shuffle=False,
-                                 num_workers=config.num_workers,
-                                 drop_last=False,
-                                 pin_memory=True)
-
-    user2vector = {}
-    for minibatch in tqdm(user_dataloader,
-                          desc="Calculating vectors for users"):
-        user_strings = minibatch["clicked_news_string"]
-        if any(user_string not in user2vector for user_string in user_strings):
-            clicked_news_vector = torch.stack([
-                torch.stack([article2vect[x].to(device) for x in news_list],
-                            dim=0) for news_list in minibatch["clicked_news"]
-            ], dim=0).transpose(0, 1)
-            user_vector = model.get_user_vector(clicked_news_vector)
-            for user, vector in zip(user_strings, user_vector):
-                if user not in user2vector:
-                    user2vector[user] = vector
-
-    behaviors_dataset = BehaviorsDataset(path.join(directory, 'behaviors.tsv'))
-    behaviors_dataloader = DataLoader(behaviors_dataset,
-                                      batch_size=1,
-                                      shuffle=False,
-                                      num_workers=config.num_workers)
 
     count = 0
-
     tasks = []
-
-    for minibatch in tqdm(behaviors_dataloader,
-                          desc="Calculating probabilities"):
+    candidate_articles_g = None
+    for minibatch in tqdm(dataloader, desc="Calculating probabilities"):
         count += 1
         if count == max_count:
             break
 
-        candidate_news_vector = torch.stack([
-            article2vect[news[0].split('-')[0]]
-            for news in minibatch['impressions']
-        ],
-                                            dim=0)
-        user_vector = user2vector[minibatch['clicked_news_string'][0]]
-        click_probability = model.get_prediction(candidate_news_vector,
-                                                 user_vector)
+        candidates = minibatch["candidate_articles"]
+        prev_purchased = minibatch["prev_purchased_parsed"]
 
-        y_pred = click_probability.tolist()
-        y_true = [
-            int(news[0].split('-')[1]) for news in minibatch['impressions']
-        ]
+        if candidate_articles_g is None:
+            candidate_articles = torch.stack([
+                model.get_article_vector(article) for article in tqdm(candidates, desc="Loading candidate articles vector")
+            ], dim=1)
+            candidate_articles_g = candidate_articles
+        else:
+            candidate_articles = candidate_articles_g
+        bought_articles = torch.stack([
+            model.get_article_vector(x) for x in prev_purchased
+        ], dim=1)
+        user_vector = model.get_customer_vector(bought_articles)
 
-        tasks.append((y_true, y_pred))
+        click_probability = torch.bmm(candidate_articles, user_vector.unsqueeze(dim=-1)).squeeze(dim=-1)
 
-    with Pool(processes=num_workers) as pool:
-        results = pool.map(calculate_single_user_metric, tasks)
+        # Shape of batch_size * num_candidates
+        y_pred = click_probability
+        y_pred = F.softmax(y_pred, dim=1)
+        # We just use top 12 articles for calculating metrics
+        y_pred_topk = y_pred.topk(k=12, dim=1).indices
+        y_pred_topk = y_pred_topk.tolist()
 
-    aucs, mrrs, ndcg5s, ndcg10s = np.array(results).T
-    return np.nanmean(aucs), np.nanmean(mrrs), np.nanmean(ndcg5s), np.nanmean(
-        ndcg10s)
+        y_true = minibatch['label'] # batch_size
+        y_true = [sample.tolist() for sample in y_true]
+        tasks.append((y_true, y_pred_topk))
+
+    results = list(map(cal_metrics, tasks))
+    recalls, apks = np.array(results).T
+    return np.nanmean(recalls), np.nanmean(apks)
 
 
 if __name__ == '__main__':
@@ -263,10 +197,10 @@ if __name__ == '__main__':
         exit()
     print(f"Load saved parameters in {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path)
+    print("test model")
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
-    auc, mrr, ndcg5, ndcg10 = evaluate(model, './data/test',
-                                       config.num_workers)
+    recall, apk12 = evaluate(model, r'E:\project_deep_learning\personalized_fashion_recommendation\processed_data')
     print(
-        f'AUC: {auc:.4f}\nMRR: {mrr:.4f}\nnDCG@5: {ndcg5:.4f}\nnDCG@10: {ndcg10:.4f}'
+        f'Recall: {recall:.4f}\nAPK@12: {apk12:.4f}\n'
     )

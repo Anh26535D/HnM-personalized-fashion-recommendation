@@ -5,17 +5,18 @@ class BaseConfig():
     num_epochs = 1
     num_batches_show_loss = 10  # Number of batchs to show loss
     # Number of batchs to check metrics on validation dataset
-    num_batches_validate = 10
+    num_batches_validate = 100
     batch_size = 128
-    learning_rate = 0.0001
+    learning_rate = 0.01
     num_workers = 0  # Number of workers for data loading, in windows, it should be 0 (bug)
-    num_purchased_articles_a_user = 1  # Number of sampled purchase history for each user
+    num_prev_purchased = 30  # Number of sampled purchase history for each user
     num_words_detail_desc = 100  # Number of words in detail description
     word_freq_threshold = 1
-    negative_sampling_ratio = 2  # K
+    negative_sampling_ratio = 100  # K
     num_random_sampled_articles = 1  # Number of random sampled articles for each user
     dropout_probability = 0.2
     # Modify the following by the output of `src/data_preprocess.py`
+    max_history = 30  # Max number of purchase history stored for each user
     processed_data_path = "processed_data/"
     num_words = 1 + 4889
     num_categories = 1 + 46411

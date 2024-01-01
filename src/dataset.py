@@ -2,6 +2,7 @@ from torch.utils.data import Dataset
 import pandas as pd
 import torch
 import numpy as np
+from ast import literal_eval
 
 from config import NAMLConfig as config
 
@@ -22,6 +23,7 @@ class BaseDataset(Dataset):
                    for attribute in config.dataset_attributes['record'])
 
         self.transactions_parsed = pd.read_csv(transactions_path)
+
         self.articles_parsed = pd.read_csv(
             articles_path,
             index_col='article_id',
@@ -49,16 +51,26 @@ class BaseDataset(Dataset):
             k: v for k, v in padding_all.items()
             if k in config.dataset_attributes['articles']
         }
-
         self.artice_ids = self.articles_parsed.index.tolist()
 
     def __len__(self):
         return len(self.transactions_parsed)
 
     def __getitem__(self, idx):
-        item = {}
         row = self.transactions_parsed.iloc[idx]
-        item["article_id"] = [self.articles2dict[row['article_id']]]
+        item = {}
+        item["article_id"] = row['article_id']
+        item['article_id_parsed'] = [self.articles2dict[row['article_id']]]
+
+        prev_purchased = literal_eval(row['prev_purchased'])
+        if len(prev_purchased) > config.num_prev_purchased:
+            prev_purchased = prev_purchased[-config.num_prev_purchased:]
+
+        item["prev_purchased_parsed"] = [self.articles2dict[x] for x in prev_purchased]
+        repeated_times = config.num_prev_purchased - len(item["prev_purchased_parsed"])
+        assert repeated_times >= 0
+        item["prev_purchased_parsed"] = [self.padding] * repeated_times + item["prev_purchased_parsed"]
+
         for key in config.dataset_attributes['record']:
             item[key] = row[key]
 
@@ -66,5 +78,5 @@ class BaseDataset(Dataset):
         item["candidate_articles"] = [
             self.articles2dict[x] for x in self.artice_ids[:config.num_random_sampled_articles]
         ]
-
+        item["candidate_articles"] += item['article_id_parsed']
         return item

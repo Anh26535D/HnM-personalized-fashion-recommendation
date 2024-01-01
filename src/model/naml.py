@@ -1,4 +1,6 @@
 import torch
+from torch.nn import functional as F
+
 from model.article_encoder import ArticleEncoder
 from model.customer_encoder import CustomerEncoder
 
@@ -57,10 +59,8 @@ class NAML(torch.nn.Module):
         _candidate_articles = torch.stack(
             [self.article_encoder(x) for x in candidates], dim=1)
         # batch_size, num_purchased_articles_a_user, num_filters
-        temp = []
-        for x in bought_articles:
-            temp.append(self.article_encoder(x))
-        _bought_articles = torch.stack(temp, dim=1)
+        _bought_articles = torch.stack(
+            [self.article_encoder(x) for x in bought_articles], dim=1)
         
         # batch_size, num_filters
         customer_vector = self.customer_encoder(_bought_articles)

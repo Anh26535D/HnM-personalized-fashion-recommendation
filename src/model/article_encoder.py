@@ -92,6 +92,7 @@ class ArticleEncoder(torch.nn.Module):
         Returns:
             (shape) batch_size, num_filters
         """
+
         text_vectors = []
         for name, encoder in self.text_encoders.items():
             text_vectors.append(encoder(articles[name].to(device)))

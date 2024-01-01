@@ -188,14 +188,14 @@ if __name__ == '__main__':
                     os.path.join(processed_data_dir, 'word2int.csv'))
 
     print('Parse transactions')
-    parse_transactions(os.path.join(train_dir, 'transactions_train.csv'),
+    parse_transactions(os.path.join(train_dir, 'transactions_parsed.csv'),
                     os.path.join(train_dir, 'transactions_parsed.csv'),
                     os.path.join(processed_data_dir, 'user2int.csv'))
 
     print('\nProcess data for validation')
 
     print('Parse transactions')
-    parse_transactions(os.path.join(val_dir, 'transactions_val.csv'),
+    parse_transactions(os.path.join(val_dir, 'transactions_parsed.csv'),
                     os.path.join(val_dir, 'transactions_parsed.csv'),
                     os.path.join(processed_data_dir, 'user2int.csv'))
 
