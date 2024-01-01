@@ -84,3 +84,8 @@ We use NAML (Neural News Recommendation with Attentive Multi-View Learning) as m
     ```
     python .\evaluate.py
     ```
+
+7. Run tensorboard [OPTIONAL]
+    ```
+    tensorboard --logdir .\runs\
+    ```
