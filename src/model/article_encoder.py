@@ -23,10 +23,10 @@ class TextEncoder(torch.nn.Module):
         text_vector = F.dropout(self.word_embedding(text),
                                 p=self.dropout_probability,
                                 training=self.training)
-        # batch_size, num_filters, num_words_title
+        # batch_size, num_filters, num_words_text
         convoluted_text_vector = self.CNN(
             text_vector.unsqueeze(dim=1)).squeeze(dim=3)
-        # batch_size, num_filters, num_words_title
+        # batch_size, num_filters, num_words_text
         activated_text_vector = F.dropout(F.relu(convoluted_text_vector),
                                           p=self.dropout_probability,
                                           training=self.training)
