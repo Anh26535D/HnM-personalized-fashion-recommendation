@@ -11,7 +11,6 @@ from nltk.tokenize import word_tokenize
 
 from config import NAMLConfig as config
 
-
 nltk.download('punkt')
 
 
